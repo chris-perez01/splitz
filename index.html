@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✂️</text></svg>">
+<title>Splitz — File Splitter for Claude</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0c0c0f;
+    --surface: #16161a;
+    --surface-raised: #1e1e24;
+    --border: #2a2a32;
+    --border-hover: #3a3a44;
+    --text: #e8e6e3;
+    --text-muted: #8a8890;
+    --accent: #6c5ce7;
+    --accent-glow: rgba(108, 92, 231, 0.25);
+    --success: #00b894;
+    --success-glow: rgba(0, 184, 148, 0.15);
+    --warn: #fdcb6e;
+    --warn-glow: rgba(253, 203, 110, 0.12);
+    --danger: #e17055;
+    --radius: 12px;
+    --radius-sm: 8px;
+  }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px 60px;
+    line-height: 1.5;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(108, 92, 231, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(108, 92, 231, 0.03) 1px, transparent 1px);
+    background-size: 60px 60px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container { position: relative; z-index: 1; max-width: 640px; width: 100%; }
+
+  header { text-align: center; margin-bottom: 24px; }
+  header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 6px; }
+  header h1 span { color: var(--accent); }
+  header p { color: var(--text-muted); font-size: 14px; }
+
+  .description { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 24px; font-size: 13px; line-height: 1.7; color: var(--text-muted); }
+  .description strong { color: var(--text); font-weight: 600; }
+  .description .desc-title { color: var(--text); font-weight: 600; font-size: 14px; margin-bottom: 10px; display: block; }
+  .desc-list { margin: 10px 0 10px 4px; }
+  .desc-list div { padding: 4px 0; padding-left: 18px; position: relative; }
+  .desc-list div::before { content: ''; position: absolute; left: 4px; top: 12px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); opacity: 0.6; }
+  .desc-list .warn-item::before { background: var(--warn); }
+  .desc-privacy { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12px; }
+  .desc-privacy .lock { margin-right: 4px; }
+
+  .drop-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 48px 24px; text-align: center; cursor: pointer; transition: all 0.25s ease; background: var(--surface); position: relative; overflow: hidden; }
+  .drop-zone::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at center, var(--accent-glow), transparent 70%); opacity: 0; transition: opacity 0.3s ease; }
+  .drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); }
+  .drop-zone:hover::before, .drop-zone.drag-over::before { opacity: 1; }
+  .drop-zone-icon { font-size: 40px; margin-bottom: 12px; display: block; position: relative; }
+  .drop-zone-text { font-size: 15px; font-weight: 500; color: var(--text); position: relative; }
+  .drop-zone-hint { font-size: 13px; color: var(--text-muted); margin-top: 6px; position: relative; }
+  #fileInput { display: none; }
+
+  .settings { margin-top: 20px; display: flex; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 18px; }
+  .settings label { font-size: 13px; font-weight: 500; color: var(--text-muted); white-space: nowrap; }
+  .settings input[type="number"] { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 14px; padding: 6px 10px; width: 72px; text-align: center; outline: none; transition: border-color 0.2s; }
+  .settings input[type="number"]:focus { border-color: var(--accent); }
+  .settings .unit { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text-muted); }
+
+  .file-card { margin-top: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; display: none; animation: slideIn 0.3s ease; }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .file-card.visible { display: block; }
+  .file-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .file-card-name { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
+  .file-card-size { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--accent); font-weight: 500; }
+  .file-card-meta { display: flex; gap: 20px; font-size: 13px; color: var(--text-muted); flex-wrap: wrap; }
+  .file-card-meta span { font-family: 'JetBrains Mono', monospace; }
+
+  .tab-picker { margin-top: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; display: none; animation: slideIn 0.3s ease; }
+  .tab-picker.visible { display: block; }
+  .tab-picker-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+  .tab-picker-subtitle { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
+  .tab-list { display: flex; flex-direction: column; gap: 6px; }
+  .tab-item { display: flex; align-items: center; gap: 10px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 14px; cursor: pointer; transition: border-color 0.15s; }
+  .tab-item:hover { border-color: var(--border-hover); }
+  .tab-item.selected { border-color: var(--accent); }
+  .tab-item input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+  .tab-item-name { font-size: 13px; font-weight: 500; flex: 1; }
+  .tab-item-info { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-muted); }
+  .tab-select-all { font-size: 12px; color: var(--accent); cursor: pointer; border: none; background: none; font-family: 'DM Sans', sans-serif; font-weight: 500; margin-bottom: 10px; padding: 0; }
+  .tab-select-all:hover { text-decoration: underline; }
+
+  .warning-banner { margin-top: 20px; background: var(--surface); border: 1px solid var(--warn); border-radius: var(--radius); padding: 18px; display: none; animation: slideIn 0.3s ease; }
+  .warning-banner.visible { display: block; }
+  .warning-banner .warn-icon { font-size: 22px; margin-bottom: 8px; display: block; }
+  .warning-banner .warn-title { font-size: 14px; font-weight: 600; color: var(--warn); margin-bottom: 6px; }
+  .warning-banner .warn-msg { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+
+  .split-btn { margin-top: 20px; width: 100%; padding: 14px; background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.2s ease; display: none; position: relative; overflow: hidden; }
+  .split-btn.visible { display: block; }
+  .split-btn:hover { background: #5b4bd5; box-shadow: 0 4px 20px var(--accent-glow); }
+  .split-btn:active { transform: scale(0.98); }
+  .split-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+  .under-limit { margin-top: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; text-align: center; display: none; animation: slideIn 0.3s ease; }
+  .under-limit.visible { display: block; }
+  .under-limit .icon { font-size: 28px; margin-bottom: 8px; }
+  .under-limit .msg { font-size: 14px; color: var(--success); font-weight: 600; }
+  .under-limit .sub { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+
+  .progress-wrap { margin-top: 20px; display: none; }
+  .progress-wrap.visible { display: block; }
+  .progress-bar-track { height: 6px; background: var(--surface-raised); border-radius: 3px; overflow: hidden; }
+  .progress-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--success)); border-radius: 3px; width: 0%; transition: width 0.15s ease; }
+  .progress-text { font-size: 13px; color: var(--text-muted); margin-top: 8px; text-align: center; font-family: 'JetBrains Mono', monospace; }
+
+  .results { margin-top: 24px; display: none; }
+  .results.visible { display: block; }
+  .results-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .results-header h2 { font-size: 16px; font-weight: 600; }
+  .results-header .badge { background: var(--success-glow); color: var(--success); font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 20px; font-family: 'JetBrains Mono', monospace; }
+  .download-all-btn { width: 100%; padding: 12px; background: var(--success); color: #fff; border: none; border-radius: var(--radius-sm); font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s ease; margin-bottom: 14px; }
+  .download-all-btn:hover { background: #00a381; box-shadow: 0 4px 16px var(--success-glow); }
+  .chunk-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  .chunk-item { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 16px; animation: slideIn 0.3s ease; }
+  .chunk-item-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .chunk-num { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; color: var(--accent); background: rgba(108, 92, 231, 0.1); padding: 2px 8px; border-radius: 4px; flex-shrink: 0; }
+  .chunk-name { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chunk-item-right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+  .chunk-size { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-muted); }
+  .chunk-dl { background: none; border: 1px solid var(--border); color: var(--text); font-size: 12px; font-weight: 500; padding: 5px 12px; border-radius: 6px; cursor: pointer; transition: all 0.15s ease; font-family: 'DM Sans', sans-serif; }
+  .chunk-dl:hover { border-color: var(--accent); color: var(--accent); }
+
+  .reset-link { display: none; margin-top: 16px; text-align: center; }
+  .reset-link.visible { display: block; }
+  .reset-link button { background: none; border: none; color: var(--text-muted); font-size: 13px; cursor: pointer; text-decoration: underline; font-family: 'DM Sans', sans-serif; transition: color 0.15s; }
+  .reset-link button:hover { color: var(--text); }
+
+  .version { margin-top: 24px; text-align: center; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--border-hover); }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>✂️ <span>Splitz</span></h1>
+    <p>Break any file into ≤30 MB chunks for Claude upload</p>
+  </header>
+
+  <div class="description">
+    <span class="desc-title">How Splitz handles your files</span>
+    <div class="desc-list">
+      <div><strong>CSV, TSV, and text files</strong> — Splits on clean row boundaries with headers preserved in every chunk</div>
+      <div><strong>Excel files (.xlsx)</strong> — Extracts each tab as a separate CSV, then splits any that exceed the size limit</div>
+      <div><strong>PDF files</strong> — Splits on full page boundaries so each chunk is a valid, openable PDF</div>
+      <div class="warn-item"><strong>ZIPs and other binary files</strong> — ⚠️ Cannot be split cleanly. Extract contents first and upload individual files</div>
+    </div>
+    <div class="desc-privacy"><span class="lock">🔒</span> Everything runs locally in your browser — no data is sent to any server, so sensitive financial and tax data stays private.</div>
+  </div>
+
+  <div class="drop-zone" id="dropZone">
+    <span class="drop-zone-icon">✂️</span>
+    <div class="drop-zone-text">Drop a file here or click to browse</div>
+    <div class="drop-zone-hint">CSV, Excel, PDF, and more</div>
+  </div>
+  <input type="file" id="fileInput">
+
+  <div class="settings">
+    <label for="chunkSize">Max chunk size</label>
+    <input type="number" id="chunkSize" value="30" min="1" max="500" step="1">
+    <span class="unit">MB</span>
+  </div>
+
+  <div class="file-card" id="fileCard">
+    <div class="file-card-header">
+      <div class="file-card-name" id="fileName"></div>
+      <div class="file-card-size" id="fileSize"></div>
+    </div>
+    <div class="file-card-meta">
+      <div>Mode: <span id="splitMode">—</span></div>
+      <div>Type: <span id="fileType">—</span></div>
+    </div>
+  </div>
+
+  <div class="tab-picker" id="tabPicker">
+    <div class="tab-picker-title">Select tabs to export as CSV</div>
+    <div class="tab-picker-subtitle">Each selected tab will be converted to a CSV. Any CSV over the size limit will be automatically split.</div>
+    <button class="tab-select-all" id="tabSelectAll">Select all</button>
+    <div class="tab-list" id="tabList"></div>
+  </div>
+
+  <div class="warning-banner" id="warningBanner">
+    <span class="warn-icon">⚠️</span>
+    <div class="warn-title">This file type can't be split into usable chunks</div>
+    <div class="warn-msg">ZIP, RAR, and other archive/binary formats can't be split cleanly — each chunk would be unusable on its own. Try extracting the contents first, then upload the individual files to Splitz.</div>
+  </div>
+
+  <button class="split-btn" id="splitBtn">Split File</button>
+
+  <div class="under-limit" id="underLimit">
+    <div class="icon">✅</div>
+    <div class="msg">File is already under the limit!</div>
+    <div class="sub">No splitting needed — upload directly to Claude.</div>
+  </div>
+
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-bar-track">
+      <div class="progress-bar-fill" id="progressFill"></div>
+    </div>
+    <div class="progress-text" id="progressText">Processing… 0%</div>
+  </div>
+
+  <div class="results" id="results">
+    <div class="results-header">
+      <h2>Files ready</h2>
+      <span class="badge" id="resultsBadge"></span>
+    </div>
+    <button class="download-all-btn" id="downloadAllBtn">⬇ Download All Files</button>
+    <ul class="chunk-list" id="chunkList"></ul>
+  </div>
+
+  <div class="reset-link" id="resetLink">
+    <button id="resetBtn">↺ Start over with another file</button>
+  </div>
+
+  <div class="version">v2.2</div>
+</div>
+
+<script>
+  // ========== DOM REFS ==========
+  const dropZone = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+  const chunkSizeInput = document.getElementById('chunkSize');
+  const fileCard = document.getElementById('fileCard');
+  const splitBtn = document.getElementById('splitBtn');
+  const underLimit = document.getElementById('underLimit');
+  const progressWrap = document.getElementById('progressWrap');
+  const progressFill = document.getElementById('progressFill');
+  const progressText = document.getElementById('progressText');
+  const results = document.getElementById('results');
+  const chunkList = document.getElementById('chunkList');
+  const resetLink = document.getElementById('resetLink');
+  const tabPicker = document.getElementById('tabPicker');
+  const tabList = document.getElementById('tabList');
+  const warningBanner = document.getElementById('warningBanner');
+
+  let selectedFile = null;
+  let chunks = [];
+  let xlsxZip = null;       // JSZip instance of the .xlsx
+  let xlsxSheetInfo = [];   // [{name, file, rows, cols}]
+  let sharedStrings = null; // parsed shared strings table
+
+  // ========== HELPERS ==========
+  function fmt(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1073741824) return (bytes / 1048576).toFixed(2) + ' MB';
+    return (bytes / 1073741824).toFixed(2) + ' GB';
+  }
+  function getExt(name) { const i = name.lastIndexOf('.'); return i > 0 ? name.substring(i) : ''; }
+  function getBase(name) { const i = name.lastIndexOf('.'); return i > 0 ? name.substring(0, i) : name; }
+
+  const TEXT_EXTENSIONS = ['.csv', '.tsv', '.txt', '.tab', '.log', '.dat', '.psv'];
+  const EXCEL_EXTENSIONS = ['.xlsx', '.xls', '.xlsm'];
+  const PDF_EXTENSIONS = ['.pdf'];
+  const BINARY_WARN_EXTENSIONS = ['.zip', '.rar', '.7z', '.tar', '.gz', '.tgz', '.bz2', '.xz', '.dmg', '.iso', '.bin', '.exe', '.msi'];
+
+  function getFileType(name) {
+    const ext = getExt(name).toLowerCase();
+    if (TEXT_EXTENSIONS.includes(ext)) return 'text';
+    if (EXCEL_EXTENSIONS.includes(ext)) return 'excel';
+    if (PDF_EXTENSIONS.includes(ext)) return 'pdf';
+    if (BINARY_WARN_EXTENSIONS.includes(ext)) return 'binary-warn';
+    return 'binary-other';
+  }
+
+  // CSV-escape a cell value
+  function csvEscape(val) {
+    if (val === null || val === undefined) return '';
+    const s = String(val);
+    if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+
+  // ========== XLSX INTERNALS ==========
+  // Parse workbook.xml to get sheet names and rIds
+  function parseWorkbook(xml) {
+    const sheets = [];
+    const regex = /<sheet[^>]*name="([^"]*)"[^>]*sheetId="(\d+)"[^>]*r:id="([^"]*)"[^>]*\/?>/g;
+    let m;
+    while ((m = regex.exec(xml)) !== null) {
+      sheets.push({ name: m[1].replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'"), sheetId: m[2], rId: m[3] });
+    }
+    return sheets;
+  }
+
+  // Parse workbook.xml.rels to map rId -> file path
+  function parseRels(xml) {
+    const map = {};
+    const regex = /<Relationship[^>]*Id="([^"]*)"[^>]*Target="([^"]*)"[^>]*\/?>/g;
+    let m;
+    while ((m = regex.exec(xml)) !== null) {
+      map[m[1]] = m[2].replace(/^\/?/, '');
+    }
+    return map;
+  }
+
+  // Parse sharedStrings.xml into an array of strings
+  function parseSharedStrings(xml) {
+    if (!xml) return [];
+    const strings = [];
+    // Match each <si> element
+    const siRegex = /<si>([\s\S]*?)<\/si>/g;
+    let m;
+    while ((m = siRegex.exec(xml)) !== null) {
+      const siContent = m[1];
+      // Extract all <t> text within the <si>
+      let text = '';
+      const tRegex = /<t[^>]*>([\s\S]*?)<\/t>/g;
+      let tm;
+      while ((tm = tRegex.exec(siContent)) !== null) {
+        text += tm[1];
+      }
+      // Unescape XML entities
+      text = text.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'");
+      strings.push(text);
+    }
+    return strings;
+  }
+
+  // Get dimension (row count) from a sheet XML without parsing all cells
+  function getSheetDimension(xml) {
+    // Try <dimension ref="A1:AG348123"/>
+    const dimMatch = xml.match(/<dimension\s+ref="[A-Z]+\d+:([A-Z]+)(\d+)"/);
+    if (dimMatch) {
+      const col = colToNum(dimMatch[1]);
+      return { rows: parseInt(dimMatch[2]), cols: col };
+    }
+    return null;
+  }
+
+  // Convert column letter to number (A=1, Z=26, AA=27, etc)
+  function colToNum(s) {
+    let n = 0;
+    for (let i = 0; i < s.length; i++) {
+      n = n * 26 + (s.charCodeAt(i) - 64);
+    }
+    return n;
+  }
+
+  // Extract column letter from cell ref like "AB123" -> "AB"
+  function colFromRef(ref) {
+    return ref.replace(/[0-9]/g, '');
+  }
+
+  // ========== STREAMING SHEET-TO-CSV ==========
+  // Parse a sheet XML and convert to CSV, yielding rows to a callback
+  // This processes the XML as a string but row-by-row to limit memory
+  function* iterateSheetRows(sheetXml, ssTable) {
+    // Find the <sheetData> section
+    const sdStart = sheetXml.indexOf('<sheetData');
+    const sdEnd = sheetXml.indexOf('</sheetData>');
+    if (sdStart === -1 || sdEnd === -1) return;
+
+    const sheetData = sheetXml.substring(sdStart, sdEnd + '</sheetData>'.length);
+
+    // Iterate over each <row> element
+    const rowRegex = /<row\b[^>]*>([\s\S]*?)<\/row>/g;
+    let rm;
+    while ((rm = rowRegex.exec(sheetData)) !== null) {
+      const rowContent = rm[1];
+      const cells = [];
+
+      // Parse each <c> cell
+      const cellRegex = /<c\b([^>]*)(?:\/>|>([\s\S]*?)<\/c>)/g;
+      let cm;
+      while ((cm = cellRegex.exec(rowContent)) !== null) {
+        const attrs = cm[1];
+        const inner = cm[2] || '';
+
+        // Get cell reference (column position)
+        const refMatch = attrs.match(/r="([^"]+)"/);
+        const ref = refMatch ? refMatch[1] : '';
+        const col = colFromRef(ref);
+        const colIdx = colToNum(col) - 1;
+
+        // Get type
+        const typeMatch = attrs.match(/t="([^"]+)"/);
+        const cellType = typeMatch ? typeMatch[1] : '';
+
+        // Get value
+        const vMatch = inner.match(/<v>([\s\S]*?)<\/v>/);
+        let val = vMatch ? vMatch[1] : '';
+
+        // Resolve shared string
+        if (cellType === 's' && ssTable) {
+          const idx = parseInt(val);
+          val = (idx >= 0 && idx < ssTable.length) ? ssTable[idx] : '';
+        }
+
+        // Inline string
+        if (cellType === 'inlineStr') {
+          const isMatch = inner.match(/<is>[\s\S]*?<t[^>]*>([\s\S]*?)<\/t>[\s\S]*?<\/is>/);
+          val = isMatch ? isMatch[1] : '';
+        }
+
+        // Unescape XML entities
+        val = val.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'");
+
+        // Place in correct column position (cells may be sparse)
+        while (cells.length <= colIdx) cells.push('');
+        cells[colIdx] = val;
+      }
+
+      yield cells;
+    }
+  }
+
+  // ========== DROP ZONE ==========
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length) handleFile(fileInput.files[0]);
+  });
+
+  // ========== HANDLE FILE ==========
+  async function handleFile(file) {
+    selectedFile = file;
+    chunks = [];
+    xlsxZip = null;
+    xlsxSheetInfo = [];
+    sharedStrings = null;
+    resetUI();
+
+    const ftype = getFileType(file.name);
+
+    document.getElementById('fileName').textContent = file.name;
+    document.getElementById('fileSize').textContent = fmt(file.size);
+    document.getElementById('fileType').textContent = getExt(file.name).toLowerCase() || 'unknown';
+    fileCard.classList.add('visible');
+
+    if (ftype === 'text') {
+      document.getElementById('splitMode').textContent = 'Row-aware (headers preserved)';
+      const maxBytes = chunkSizeInput.value * 1048576;
+      if (file.size <= maxBytes) {
+        underLimit.classList.add('visible');
+        resetLink.classList.add('visible');
+      } else {
+        splitBtn.textContent = 'Split File';
+        splitBtn.classList.add('visible');
+      }
+
+    } else if (ftype === 'excel') {
+      document.getElementById('splitMode').textContent = 'Excel → CSV extraction (values only)';
+      progressWrap.classList.add('visible');
+      progressText.textContent = 'Reading Excel file…';
+      progressFill.style.width = '30%';
+      await new Promise(r => setTimeout(r, 0));
+
+      try {
+        // Open the .xlsx as a ZIP using JSZip
+        const arrayBuf = await file.arrayBuffer();
+        xlsxZip = await JSZip.loadAsync(arrayBuf);
+
+        progressFill.style.width = '50%';
+        progressText.textContent = 'Scanning tabs…';
+        await new Promise(r => setTimeout(r, 0));
+
+        // Parse workbook.xml for sheet names
+        const wbXml = await xlsxZip.file('xl/workbook.xml').async('string');
+        const sheets = parseWorkbook(wbXml);
+
+        // Parse relationships to find sheet file paths
+        const relsXml = await xlsxZip.file('xl/_rels/workbook.xml.rels').async('string');
+        const relsMap = parseRels(relsXml);
+
+        progressFill.style.width = '70%';
+        progressText.textContent = 'Reading sheet dimensions…';
+        await new Promise(r => setTimeout(r, 0));
+
+        // For each sheet, get the file path and try to read dimensions
+        xlsxSheetInfo = [];
+        for (const sheet of sheets) {
+          let filePath = relsMap[sheet.rId] || '';
+          // Normalize path
+          if (!filePath.startsWith('xl/')) filePath = 'xl/' + filePath;
+
+          let rows = '?', cols = '?';
+          try {
+            const zipEntry = xlsxZip.file(filePath);
+            if (zipEntry) {
+              // Read just the first 2KB to find <dimension> tag
+              const fullXml = await zipEntry.async('string');
+              const dim = getSheetDimension(fullXml.substring(0, 5000));
+              if (dim) {
+                rows = dim.rows.toLocaleString();
+                cols = dim.cols;
+              }
+              // Don't keep the full XML in memory — we'll re-read per sheet during export
+            }
+          } catch(e) { /* keep ? */ }
+
+          xlsxSheetInfo.push({ name: sheet.name, file: filePath, rows, cols });
+        }
+
+        progressWrap.classList.remove('visible');
+
+        // Build tab picker
+        tabList.innerHTML = '';
+        xlsxSheetInfo.forEach((info, i) => {
+          const div = document.createElement('div');
+          div.className = 'tab-item selected';
+          div.innerHTML = `
+            <input type="checkbox" checked data-idx="${i}">
+            <span class="tab-item-name">${info.name}</span>
+            <span class="tab-item-info">${info.rows} rows × ${info.cols} cols</span>`;
+          div.addEventListener('click', e => {
+            if (e.target.tagName === 'INPUT') return;
+            const cb = div.querySelector('input');
+            cb.checked = !cb.checked;
+            div.classList.toggle('selected', cb.checked);
+          });
+          div.querySelector('input').addEventListener('change', e => {
+            div.classList.toggle('selected', e.target.checked);
+          });
+          tabList.appendChild(div);
+        });
+
+        tabPicker.classList.add('visible');
+        splitBtn.textContent = xlsxSheetInfo.length === 1 ? 'Export & Split' : 'Export Selected Tabs & Split';
+        splitBtn.classList.add('visible');
+
+      } catch (err) {
+        progressWrap.classList.remove('visible');
+        warningBanner.querySelector('.warn-title').textContent = 'Could not read this Excel file';
+        warningBanner.querySelector('.warn-msg').textContent = 'Error: ' + err.message;
+        warningBanner.classList.add('visible');
+        resetLink.classList.add('visible');
+      }
+
+    } else if (ftype === 'pdf') {
+      document.getElementById('splitMode').textContent = 'Page-aware PDF split';
+      const maxBytes = chunkSizeInput.value * 1048576;
+      if (file.size <= maxBytes) {
+        underLimit.classList.add('visible');
+        resetLink.classList.add('visible');
+      } else {
+        splitBtn.textContent = 'Split PDF';
+        splitBtn.classList.add('visible');
+      }
+
+    } else if (ftype === 'binary-warn') {
+      document.getElementById('splitMode').textContent = 'Not supported';
+      warningBanner.classList.add('visible');
+      resetLink.classList.add('visible');
+
+    } else {
+      document.getElementById('splitMode').textContent = 'Binary (raw byte split)';
+      const maxBytes = chunkSizeInput.value * 1048576;
+      if (file.size <= maxBytes) {
+        underLimit.classList.add('visible');
+        resetLink.classList.add('visible');
+      } else {
+        splitBtn.textContent = 'Split File';
+        splitBtn.classList.add('visible');
+      }
+    }
+  }
+
+  // ========== TAB SELECT ALL ==========
+  document.getElementById('tabSelectAll').addEventListener('click', () => {
+    const checkboxes = tabList.querySelectorAll('input[type="checkbox"]');
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    checkboxes.forEach(cb => {
+      cb.checked = !allChecked;
+      cb.closest('.tab-item').classList.toggle('selected', cb.checked);
+    });
+    document.getElementById('tabSelectAll').textContent = allChecked ? 'Select all' : 'Deselect all';
+  });
+
+  // ========== CHUNK SIZE CHANGE ==========
+  chunkSizeInput.addEventListener('input', () => {
+    if (!selectedFile) return;
+    const ftype = getFileType(selectedFile.name);
+    if (ftype === 'binary-warn' || ftype === 'excel') return;
+    const maxBytes = chunkSizeInput.value * 1048576;
+    if (selectedFile.size <= maxBytes) {
+      underLimit.classList.add('visible');
+      splitBtn.classList.remove('visible');
+    } else {
+      underLimit.classList.remove('visible');
+      splitBtn.classList.add('visible');
+    }
+  });
+
+  // ========== SPLIT BUTTON ==========
+  splitBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    const ftype = getFileType(selectedFile.name);
+
+    splitBtn.disabled = true;
+    splitBtn.textContent = 'Processing…';
+    progressWrap.classList.add('visible');
+    results.classList.remove('visible');
+    progressFill.style.width = '0%';
+
+    const maxBytes = chunkSizeInput.value * 1048576;
+    chunks = [];
+
+    try {
+      if (ftype === 'text') await splitText(maxBytes);
+      else if (ftype === 'excel') await splitExcel(maxBytes);
+      else if (ftype === 'pdf') await splitPdf(maxBytes);
+      else await splitBinary(maxBytes);
+    } catch (err) {
+      progressText.textContent = 'Error: ' + err.message;
+      splitBtn.textContent = 'Retry';
+      splitBtn.disabled = false;
+      return;
+    }
+
+    progressFill.style.width = '100%';
+    progressText.textContent = 'Done!';
+    splitBtn.textContent = 'Split File';
+    splitBtn.disabled = false;
+    splitBtn.classList.remove('visible');
+    tabPicker.classList.remove('visible');
+    showResults();
+  });
+
+  // ========== TEXT SPLIT (streaming) ==========
+  async function splitText(maxBytes) {
+    const baseName = getBase(selectedFile.name);
+    const ext = getExt(selectedFile.name);
+    progressText.textContent = 'Reading file…';
+    await new Promise(r => setTimeout(r, 0));
+
+    const peekSize = Math.min(selectedFile.size, 65536);
+    const peekText = await selectedFile.slice(0, peekSize).text();
+    const newline = peekText.includes('\r\n') ? '\r\n' : '\n';
+    const headerEnd = peekText.indexOf(newline);
+    const header = peekText.substring(0, headerEnd);
+    const headerWithNl = header + newline;
+    const headerBytes = new Blob([headerWithNl]).size;
+
+    const READ_CHUNK = 4 * 1048576;
+    let fileOffset = headerEnd + newline.length;
+    let leftover = '';
+    let currentChunkParts = [headerWithNl];
+    let currentSize = headerBytes;
+    let rowsProcessed = 0;
+    const totalBytes = selectedFile.size;
+
+    while (fileOffset < totalBytes || leftover.length > 0) {
+      let batch = leftover;
+      if (fileOffset < totalBytes) {
+        const end = Math.min(fileOffset + READ_CHUNK, totalBytes);
+        batch += await selectedFile.slice(fileOffset, end).text();
+        fileOffset = end;
+      }
+      const lines = batch.split(newline);
+      if (fileOffset < totalBytes) { leftover = lines.pop(); }
+      else { leftover = ''; if (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop(); }
+
+      for (const line of lines) {
+        if (line === '') continue;
+        const lineWithNl = line + newline;
+        const lineBytes = new Blob([lineWithNl]).size;
+        if (currentSize + lineBytes > maxBytes && currentSize > headerBytes) {
+          chunks.push({ blob: new Blob(currentChunkParts, { type: 'text/plain' }), name: '', size: 0 });
+          chunks[chunks.length-1].size = chunks[chunks.length-1].blob.size;
+          currentChunkParts = [headerWithNl];
+          currentSize = headerBytes;
+        }
+        currentChunkParts.push(lineWithNl);
+        currentSize += lineBytes;
+        rowsProcessed++;
+      }
+      const pct = Math.round((fileOffset / totalBytes) * 100);
+      progressFill.style.width = pct + '%';
+      progressText.textContent = `Splitting rows… ${pct}% (${rowsProcessed.toLocaleString()} rows)`;
+      await new Promise(r => setTimeout(r, 0));
+    }
+    if (currentSize > headerBytes) {
+      const b = new Blob(currentChunkParts, { type: 'text/plain' });
+      chunks.push({ blob: b, name: '', size: b.size });
+    }
+    const total = chunks.length;
+    chunks.forEach((c, i) => {
+      const partLabel = String(i + 1).padStart(String(total).length, '0');
+      c.name = total === 1 ? `${baseName}${ext}` : `${baseName}_part${partLabel}of${total}${ext}`;
+    });
+  }
+
+  // ========== EXCEL SPLIT (JSZip + streaming XML parser) ==========
+  async function splitExcel(maxBytes) {
+    const baseName = getBase(selectedFile.name);
+    const newline = '\n';
+
+    // Get selected tabs
+    const checkboxes = tabList.querySelectorAll('input[type="checkbox"]:checked');
+    const selectedIndices = Array.from(checkboxes).map(cb => parseInt(cb.dataset.idx));
+    if (selectedIndices.length === 0) throw new Error('No tabs selected.');
+
+    // Load shared strings table (needed to resolve cell values)
+    if (!sharedStrings) {
+      progressText.textContent = 'Loading shared strings…';
+      await new Promise(r => setTimeout(r, 0));
+      const ssFile = xlsxZip.file('xl/sharedStrings.xml');
+      if (ssFile) {
+        const ssXml = await ssFile.async('string');
+        sharedStrings = parseSharedStrings(ssXml);
+      } else {
+        sharedStrings = [];
+      }
+    }
+
+    const totalTabs = selectedIndices.length;
+    let tabsDone = 0;
+
+    for (const idx of selectedIndices) {
+      const info = xlsxSheetInfo[idx];
+      const safeName = info.name.replace(/[^\w\s-]/g, '').replace(/\s+/g, '_');
+
+      progressText.textContent = `Reading "${info.name}"… (${tabsDone + 1}/${totalTabs})`;
+      progressFill.style.width = Math.round((tabsDone / totalTabs) * 100) + '%';
+      await new Promise(r => setTimeout(r, 0));
+
+      // Load the sheet XML from the ZIP
+      const sheetFile = xlsxZip.file(info.file);
+      if (!sheetFile) throw new Error(`Sheet file not found: ${info.file}`);
+      const sheetXml = await sheetFile.async('string');
+
+      progressText.textContent = `Converting "${info.name}" to CSV…`;
+      await new Promise(r => setTimeout(r, 0));
+
+      // Stream rows from the XML and build CSV chunks
+      let header = null;
+      let headerWithNl = '';
+      let headerBytesSize = 0;
+      let subChunks = [];
+      let currentParts = [];
+      let currentSize = 0;
+      let rowCount = 0;
+
+      for (const cells of iterateSheetRows(sheetXml, sharedStrings)) {
+        const csvLine = cells.map(csvEscape).join(',') + newline;
+
+        if (rowCount === 0) {
+          // First row = header
+          header = csvLine;
+          headerWithNl = header;
+          headerBytesSize = new Blob([headerWithNl]).size;
+          currentParts = [headerWithNl];
+          currentSize = headerBytesSize;
+        } else {
+          const lineBytes = new Blob([csvLine]).size;
+
+          if (currentSize + lineBytes > maxBytes && currentSize > headerBytesSize) {
+            const blob = new Blob(currentParts, { type: 'text/csv' });
+            subChunks.push({ blob, size: blob.size });
+            currentParts = [headerWithNl];
+            currentSize = headerBytesSize;
+          }
+
+          currentParts.push(csvLine);
+          currentSize += lineBytes;
+        }
+
+        rowCount++;
+
+        // Yield to UI every 10000 rows for progress
+        if (rowCount % 10000 === 0) {
+          progressText.textContent = `Converting "${info.name}"… ${rowCount.toLocaleString()} rows`;
+          progressFill.style.width = Math.round(((tabsDone + 0.5) / totalTabs) * 100) + '%';
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
+
+      // Flush remaining
+      if (currentSize > headerBytesSize) {
+        const blob = new Blob(currentParts, { type: 'text/csv' });
+        subChunks.push({ blob, size: blob.size });
+      }
+
+      // If sheet was empty or header-only
+      if (subChunks.length === 0 && header) {
+        const blob = new Blob([header], { type: 'text/csv' });
+        subChunks.push({ blob, size: blob.size });
+      }
+
+      // Name the chunks
+      subChunks.forEach((sc, i) => {
+        const partLabel = String(i + 1).padStart(String(subChunks.length).length, '0');
+        const name = subChunks.length === 1
+          ? `${baseName}_${safeName}.csv`
+          : `${baseName}_${safeName}_part${partLabel}of${subChunks.length}.csv`;
+        chunks.push({ blob: sc.blob, name, size: sc.size });
+      });
+
+      tabsDone++;
+      progressFill.style.width = Math.round((tabsDone / totalTabs) * 100) + '%';
+      progressText.textContent = `"${info.name}" done — ${rowCount.toLocaleString()} rows`;
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  // ========== PDF SPLIT ==========
+  async function splitPdf(maxBytes) {
+    const baseName = getBase(selectedFile.name);
+    progressText.textContent = 'Reading PDF…';
+    await new Promise(r => setTimeout(r, 0));
+
+    const arrayBuf = await selectedFile.arrayBuffer();
+    const pdfDoc = await PDFLib.PDFDocument.load(arrayBuf);
+    const totalPages = pdfDoc.getPageCount();
+
+    progressText.textContent = `PDF has ${totalPages} pages. Splitting…`;
+    await new Promise(r => setTimeout(r, 0));
+
+    let currentStartPage = 0;
+    while (currentStartPage < totalPages) {
+      let hi = currentStartPage;
+      while (hi < totalPages - 1) {
+        const testDoc = await PDFLib.PDFDocument.create();
+        const pageIndices = [];
+        for (let p = currentStartPage; p <= hi + 1; p++) pageIndices.push(p);
+        const copiedPages = await testDoc.copyPages(pdfDoc, pageIndices);
+        copiedPages.forEach(p => testDoc.addPage(p));
+        const testBytes = await testDoc.save();
+        if (testBytes.byteLength > maxBytes && hi > currentStartPage) break;
+        else if (testBytes.byteLength > maxBytes && hi === currentStartPage) { hi++; break; }
+        else hi++;
+        const pct = Math.round((hi / totalPages) * 100);
+        progressFill.style.width = pct + '%';
+        progressText.textContent = `Analyzing pages… ${hi + 1}/${totalPages}`;
+        await new Promise(r => setTimeout(r, 0));
+      }
+
+      const chunkDoc = await PDFLib.PDFDocument.create();
+      const pageIndices = [];
+      for (let p = currentStartPage; p <= hi; p++) pageIndices.push(p);
+      const copiedPages = await chunkDoc.copyPages(pdfDoc, pageIndices);
+      copiedPages.forEach(p => chunkDoc.addPage(p));
+      const chunkBytes = await chunkDoc.save();
+      const blob = new Blob([chunkBytes], { type: 'application/pdf' });
+      chunks.push({ blob, name: '', size: blob.size, pages: `pp. ${currentStartPage + 1}–${hi + 1}` });
+      currentStartPage = hi + 1;
+    }
+
+    const total = chunks.length;
+    chunks.forEach((c, i) => {
+      const partLabel = String(i + 1).padStart(String(total).length, '0');
+      c.name = total === 1 ? `${baseName}.pdf` : `${baseName}_part${partLabel}of${total}.pdf`;
+    });
+  }
+
+  // ========== BINARY SPLIT ==========
+  async function splitBinary(maxBytes) {
+    const baseName = getBase(selectedFile.name);
+    const ext = getExt(selectedFile.name);
+    const total = Math.ceil(selectedFile.size / maxBytes);
+    for (let i = 0; i < total; i++) {
+      const start = i * maxBytes;
+      const end = Math.min(start + maxBytes, selectedFile.size);
+      const blob = selectedFile.slice(start, end);
+      const partLabel = String(i + 1).padStart(String(total).length, '0');
+      chunks.push({ blob, name: `${baseName}_part${partLabel}of${total}${ext}`, size: end - start });
+      const pct = Math.round(((i + 1) / total) * 100);
+      progressFill.style.width = pct + '%';
+      progressText.textContent = `Splitting… ${pct}% (${i + 1}/${total})`;
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  // ========== SHOW RESULTS ==========
+  function showResults() {
+    document.getElementById('resultsBadge').textContent = chunks.length + (chunks.length === 1 ? ' file' : ' files');
+    chunkList.innerHTML = '';
+    chunks.forEach((c, i) => {
+      const li = document.createElement('li');
+      li.className = 'chunk-item';
+      li.style.animationDelay = (i * 40) + 'ms';
+      const extra = c.pages ? ` <span style="color:var(--text-muted);font-size:11px">(${c.pages})</span>` : '';
+      li.innerHTML = `
+        <div class="chunk-item-left">
+          <span class="chunk-num">${i + 1}</span>
+          <span class="chunk-name">${c.name}${extra}</span>
+        </div>
+        <div class="chunk-item-right">
+          <span class="chunk-size">${fmt(c.size)}</span>
+          <button class="chunk-dl" data-idx="${i}">Save</button>
+        </div>`;
+      chunkList.appendChild(li);
+    });
+    results.classList.add('visible');
+    resetLink.classList.add('visible');
+  }
+
+  // ========== DOWNLOADS ==========
+  chunkList.addEventListener('click', e => {
+    if (!e.target.classList.contains('chunk-dl')) return;
+    downloadChunk(chunks[parseInt(e.target.dataset.idx)]);
+  });
+
+  document.getElementById('downloadAllBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('downloadAllBtn');
+    btn.disabled = true;
+    btn.textContent = '⬇ Downloading…';
+    for (let i = 0; i < chunks.length; i++) {
+      await downloadChunkAsync(chunks[i]);
+      btn.textContent = `⬇ Downloading… ${i + 1}/${chunks.length}`;
+    }
+    btn.textContent = '⬇ Download All Files';
+    btn.disabled = false;
+  });
+
+  function downloadChunkAsync(chunk) {
+    return new Promise(resolve => {
+      const url = URL.createObjectURL(chunk.blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = chunk.name; a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { a.remove(); URL.revokeObjectURL(url); resolve(); }, 800);
+    });
+  }
+
+  function downloadChunk(chunk) {
+    const url = URL.createObjectURL(chunk.blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = chunk.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // ========== RESET ==========
+  function resetUI() {
+    fileCard.classList.remove('visible');
+    splitBtn.classList.remove('visible');
+    underLimit.classList.remove('visible');
+    progressWrap.classList.remove('visible');
+    results.classList.remove('visible');
+    resetLink.classList.remove('visible');
+    tabPicker.classList.remove('visible');
+    warningBanner.classList.remove('visible');
+    progressFill.style.width = '0%';
+    chunkList.innerHTML = '';
+    tabList.innerHTML = '';
+  }
+
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    selectedFile = null;
+    chunks = [];
+    xlsxZip = null;
+    xlsxSheetInfo = [];
+    sharedStrings = null;
+    fileInput.value = '';
+    resetUI();
+  });
+</script>
+</body>
+</html>
